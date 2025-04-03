@@ -52,12 +52,11 @@ namespace PowerDocu.SolutionDocumenter
                 .Where(o => o.getRelationshipType().Equals("ManyToMany"))
                 .Select(o => o.getFirstEntityName())
                 .ToList();
-            //entityRelationships.First().getReferencedEntityName();
-            //create containers for all tables that are being looked up (1-many relationships)
+
+            // Create containers for all tables that are being looked up (1-many relationships)
             foreach (
                 TableEntity tableEntity in tableEntities.Where(
-                    o => o.containsNonDefaultLookupColumns()
-                     || manyToManyEntityNames.Contains(o.getName())
+                    o => o.containsNonDefaultLookupColumns() || manyToManyEntityNames.Contains(o.getName())
                 )
             )
             {
@@ -67,7 +66,7 @@ namespace PowerDocu.SolutionDocumenter
                     "#7070E0"
                 );
 
-                //loop through all columns to find the lookup columns (one-to-many relationships)
+                // Loop through all columns to find lookup columns (one-to-many relationships)
                 foreach (
                     ColumnEntity lookupColumn in tableEntity
                         .GetColumns()
@@ -75,44 +74,41 @@ namespace PowerDocu.SolutionDocumenter
                         .ToList()
                 )
                 {
+                    if (lookupColumn == null)
+                    {
+                        Console.WriteLine($"Warning: lookupColumn is null for table {tableEntity.getName()}.");
+                        continue;
+                    }
+
                     TableEntity lookupTableEntity = tableEntities.Find(
                         o => o.getName().ToLower().Equals(lookupColumn.getLogicalName())
                     );
+
                     SubGraph lookupTableGraph = null;
-                    if (lookupTableEntity == null) {
-                        //check if we have it in the entityrelationships
+                    if (lookupTableEntity == null)
+                    {
+                        // Check if we have it in entityRelationships
                         EntityRelationship entityRelationship = entityRelationships
-                            .Where(
-                                o =>
-                                    o.getReferencingAttributeName().ToLower()
-                                    == lookupColumn.getLogicalName()
-                            )
-                            .FirstOrDefault();
+                            .FirstOrDefault(o => o.getReferencingAttributeName().ToLower() == lookupColumn.getLogicalName());
+
                         if (entityRelationship != null)
                         {
                             lookupTableEntity = tableEntities.Find(
-                                o =>
-                                    o.getName().Equals(entityRelationship.getReferencedEntityName())
+                                o => o.getName().Equals(entityRelationship.getReferencedEntityName())
                             );
-                            //todo update the label - check if null checks are required
+
                             if (lookupTableEntity != null)
                             {
                                 lookupTableGraph = rootGraph.GetOrAddSubgraph(
-                                    CharsetHelper.GetSafeName(
-                                        "cluster_" + lookupTableEntity.getName()
-                                    )
+                                    CharsetHelper.GetSafeName("cluster_" + lookupTableEntity.getName())
                                 );
                                 lookupTableGraph.SetAttribute(
                                     "label",
-                                    lookupTableEntity.getLocalizedName()
-                                        + " ("
-                                        + lookupTableEntity.getName()
-                                        + ")"
+                                    lookupTableEntity.getLocalizedName() + " (" + lookupTableEntity.getName() + ")"
                                 );
+
                                 createNodeRelationship(lookupTableGraph, currentTableGraph, lookupTableEntity, tableEntity, lookupColumn, "*|1");
                             }
-                        } else {
-                            string s = "";
                         }
                     }
                     else
@@ -121,58 +117,88 @@ namespace PowerDocu.SolutionDocumenter
                             "cluster_" + lookupColumn.getLogicalName(),
                             lookupTableEntity.getLocalizedName() + " (" + lookupTableEntity.getName() + ")"
                         );
+
                         createNodeRelationship(lookupTableGraph, currentTableGraph, lookupTableEntity, tableEntity, lookupColumn, "*|1");
                     }
                 }
-                //TODO many-to-many relationships; relationship is between IDs of two tables
-               if(manyToManyEntityNames.Contains(tableEntity.getName())) {
-                    String second = entityRelationships
-                        .Where(o => o.getFirstEntityName().Equals(tableEntity.getName()))
-                        .FirstOrDefault().getSecondEntityName();
-                    //todo  find the table entity for the second entity
-                    TableEntity secondTableEntity = tableEntities.Find(
-                        o => o.getName().Equals(second)
-                    );
-                    ColumnEntity idColumn = tableEntity.getPrimaryColumnEntity();
-                    SubGraph lookupTableGraph = rootGraph.GetOrAddSubgraph(
-                        CharsetHelper.GetSafeName(
-                            "cluster_" + secondTableEntity.getName()
-                        )
-                    );
-                    //todo update the label - check if null checks are required
-                    if (lookupTableGraph != null && secondTableEntity != null)
+
+                // Many-to-many relationships; relationship is between IDs of two tables
+                if (manyToManyEntityNames.Contains(tableEntity.getName()))
+                {
+                    string second = entityRelationships
+                        .FirstOrDefault(o => o.getFirstEntityName().Equals(tableEntity.getName()))
+                        ?.getSecondEntityName();
+
+                    if (second != null)
                     {
-                        lookupTableGraph.SetAttribute(
-                            "label",
-                            secondTableEntity.getLocalizedName()
-                                + " ("
-                                + secondTableEntity.getName()
-                                + ")"
-                        );
-                        createNodeRelationship(lookupTableGraph, currentTableGraph, secondTableEntity, tableEntity, idColumn, "*|*");
+                        TableEntity secondTableEntity = tableEntities.Find(o => o.getName().Equals(second));
+                        if (secondTableEntity != null)
+                        {
+                            ColumnEntity idColumn = tableEntity.getPrimaryColumnEntity();
+                            if (idColumn == null)
+                            {
+                                Console.WriteLine($"Warning: idColumn is null for table {tableEntity.getName()}.");
+                                continue;
+                            }
+
+                            SubGraph lookupTableGraph = rootGraph.GetOrAddSubgraph(
+                                CharsetHelper.GetSafeName("cluster_" + secondTableEntity.getName())
+                            );
+
+                            if (lookupTableGraph != null)
+                            {
+                                lookupTableGraph.SetAttribute(
+                                    "label",
+                                    secondTableEntity.getLocalizedName() + " (" + secondTableEntity.getName() + ")"
+                                );
+
+                                createNodeRelationship(lookupTableGraph, currentTableGraph, secondTableEntity, tableEntity, idColumn, "*|*");
+                            }
+                        }
                     }
-                    //getPrimaryColumnEntity
-                    // "Class ↔ Student"   &harr;
                 }
             }
+
             rootGraph.ComputeLayout(LayoutEngines.Dot);
             generateImageFiles(rootGraph);
         }
 
-        private void createNodeRelationship(SubGraph lookupTableGraph, SubGraph currentTableGraph, TableEntity lookupTableEntity,  TableEntity tableEntity, ColumnEntity lookupColumn, string edgeLabel) {
+        private void createNodeRelationship(SubGraph lookupTableGraph, SubGraph currentTableGraph, TableEntity lookupTableEntity, TableEntity tableEntity, ColumnEntity lookupColumn, string edgeLabel)
+        {
+            if (lookupTableEntity == null)
+            {
+                throw new ArgumentNullException(nameof(lookupTableEntity), "lookupTableEntity is null");
+            }
+            if (tableEntity == null)
+            {
+                throw new ArgumentNullException(nameof(tableEntity), "tableEntity is null");
+            }
+            if (lookupColumn == null)
+            {
+                throw new ArgumentNullException(nameof(lookupColumn), "lookupColumn is null");
+            }
+
             string nodeEdgeColor = getHexColor(lookupColumn.getLogicalName());
+
             Node primaryColumnNode = CreateNode(
                 lookupTableGraph,
                 lookupTableEntity.getName() + "-" + lookupTableEntity.getPrimaryColumn(),
                 lookupTableEntity.getPrimaryColumn() + " (Key)",
                 nodeEdgeColor
             );
+
             Node lookupColumnNode = CreateNode(
                 currentTableGraph,
                 tableEntity.getName() + "-" + lookupColumn.getDisplayName(),
                 lookupColumn.getDisplayName(),
                 nodeEdgeColor
             );
+
+            if (primaryColumnNode == null || lookupColumnNode == null)
+            {
+                throw new NullReferenceException("CreateNode returned null for one of the nodes");
+            }
+
             _ = CreateEdge(
                 lookupColumnNode,
                 primaryColumnNode,
@@ -183,11 +209,12 @@ namespace PowerDocu.SolutionDocumenter
             );
         }
 
+
         private SubGraph CreateSubGraph(string clusterName, string label, string color = null)
         {
             SubGraph subGraph = rootGraph.GetOrAddSubgraph(CharsetHelper.GetSafeName(clusterName));
             subGraph.SetAttribute("label", label);
-            if(color != null)
+            if (color != null)
             {
                 subGraph.SetAttribute("color", color);
             }
